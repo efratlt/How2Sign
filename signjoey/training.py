@@ -1,5 +1,10 @@
 #!/usr/bin/env python
+from functools import partial
+
 import torch
+from typing import Union
+from SignDataLoader import DynamicSignDataset, wrapper_collate_with_dynamic_padding
+from signjoey.utils import get_tokenizer, save_vocab, load_vocab
 
 torch.backends.cudnn.deterministic = True
 
@@ -20,7 +25,7 @@ from signjoey.helpers import (
     make_model_dir,
     make_logger,
     set_seed,
-    symlink_update,
+    symlink_update, log_data_info_sub_deatils,
 )
 from signjoey.model import SignModel
 from signjoey.prediction import validate_on_data
@@ -29,12 +34,13 @@ from signjoey.data import load_data, make_data_iter
 from signjoey.builders import build_optimizer, build_scheduler, build_gradient_clipper
 from signjoey.prediction import test
 from signjoey.metrics import wer_single
-from signjoey.vocabulary import SIL_TOKEN
+from signjoey.vocabulary import SIL_TOKEN, EOS_TOKEN, BOS_TOKEN, UNK_TOKEN, PAD_TOKEN
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchtext.data import Dataset
+from torch.utils.data import DataLoader
 from typing import List, Dict
-
+import pickle
 
 # pylint: disable=too-many-instance-attributes
 class TrainManager:
@@ -339,22 +345,29 @@ class TrainManager:
         if self.use_cuda:
             self.model.cuda()
 
-    def train_and_validate(self, train_data: Dataset, valid_data: Dataset, tokenizer=None, cfg_data=None) -> None:
+    def train_and_validate(self, train_data: Union[Dataset, DataLoader], valid_data: [Dataset, DataLoader],
+            tokenizer=None, cfg_data=None, dynamic_mode=False) -> None:
+
         """
         Train the model and validate it from time to time on the validation set.
 
         :param train_data: training data
         :param valid_data: validation data
         """
-        train_iter = make_data_iter(
-            train_data,
-            batch_size=self.batch_size,
-            batch_type=self.batch_type,
-            train=True,
-            shuffle=self.shuffle,
-        )
+        if dynamic_mode:
+            train_data_iterator = train_data
+        else:
+            train_loader = make_data_iter(
+                train_data,
+                batch_size=self.batch_size,
+                batch_type=self.batch_type,
+                train=True,
+                shuffle=self.shuffle,
+            )
         epoch_no = None
         for epoch_no in range(self.epochs):
+            if not dynamic_mode:
+                train_data_iterator = iter(train_loader)
             self.logger.info("EPOCH %d", epoch_no + 1)
 
             if self.scheduler is not None and self.scheduler_step_at == "epoch":
@@ -372,7 +385,7 @@ class TrainManager:
                 processed_txt_tokens = self.total_txt_tokens
                 epoch_translation_loss = 0
 
-            for batch in iter(train_iter):
+            for batch in train_data_iterator:
                 # reactivate training
                 # create a Batch object from torchtext batch
                 batch = Batch(
@@ -501,7 +514,8 @@ class TrainManager:
                             else None,
                             frame_subsampling_ratio=self.frame_subsampling_ratio,
                             tokenizer=tokenizer,
-                            cfg_data=cfg_data
+                            cfg_data=cfg_data,
+                            dynamic_mode=dynamic_mode
                         )
                         self.model.train()
 
@@ -659,7 +673,8 @@ class TrainManager:
                             )
 
                             self._log_examples(
-                                sequences=[s for s in valid_data.sequence],
+                                sequences=val_res["txt_sequence"],
+                                #sequences=[s for s in valid_data.sequence],
                                 gls_references=val_res["gls_ref"]
                                 if self.do_recognition
                                 else None,
@@ -674,7 +689,9 @@ class TrainManager:
                                 else None,
                             )
 
-                            valid_seq = [s for s in valid_data.sequence]
+                            valid_seq = val_res["txt_sequence"]
+
+                            #valid_seq = [s for s in valid_data.sequence]
                             # store validation set outputs and references
                             if self.do_recognition:
                                 self._store_outputs(
@@ -977,10 +994,32 @@ def train(cfg_file: str) -> None:
 
     # set the random seed
     set_seed(seed=cfg["training"].get("random_seed", 42))
+    dynamic_loading_config = cfg["dynamic"]
+    run_dynamic_mode = dynamic_loading_config["dynamic_loading"]
+    if not run_dynamic_mode:
+        train_data, dev_data, test_data, gls_vocab, txt_vocab, tokenizer = load_data(
+            data_cfg=cfg["data"]
+        )
+        save_vocab(txt_vocab, "txt", dynamic_loading_config["vocab_dir"])
+        save_vocab(gls_vocab, "gls", dynamic_loading_config["vocab_dir"])
+        save_data_into_files(dynamic_loading_config["train_dir_path"], train_data, txt_vocab, tokenizer, cfg["data"])
+        save_data_into_files(dynamic_loading_config["dev_dir_path"], dev_data, txt_vocab, tokenizer, cfg["data"])
+        save_data_into_files(dynamic_loading_config["test_dir_path"], test_data, txt_vocab, tokenizer, cfg["data"])
+    else:
+        batch_size = cfg["training"]["batch_size"]
+        tokenizer = get_tokenizer(cfg["data"])
+        txt_vocab = load_vocab("txt", dynamic_loading_config["vocab_dir"])
+        gls_vocab = load_vocab("gls", dynamic_loading_config["vocab_dir"])
 
-    train_data, dev_data, test_data, gls_vocab, txt_vocab, tokenizer = load_data(
-        data_cfg=cfg["data"]
-    )
+        custom_collate_fn_with_dynamic_padding = partial(wrapper_collate_with_dynamic_padding,
+            txt_vocab.stoi[PAD_TOKEN(cfg["data"], tokenizer)])
+
+        train_dataset = DynamicSignDataset(dynamic_loading_config["train_dir_path"])
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=custom_collate_fn_with_dynamic_padding)
+
+        dev_dataset = DynamicSignDataset(dynamic_loading_config["dev_dir_path"])
+        dev_loader = DataLoader(dev_dataset, batch_size=batch_size,
+            collate_fn=custom_collate_fn_with_dynamic_padding)
 
     # build model and load parameters into it
     do_recognition = cfg["training"].get("recognition_loss_weight", 1.0) > 0.0
@@ -1006,15 +1045,17 @@ def train(cfg_file: str) -> None:
 
     # log all entries of config
     log_cfg(cfg, trainer.logger)
-
-    log_data_info(
-        train_data=train_data,
-        valid_data=dev_data,
-        test_data=test_data,
-        gls_vocab=gls_vocab,
-        txt_vocab=txt_vocab,
-        logging_function=trainer.logger.info,
-    )
+    if run_dynamic_mode:
+        log_data_info_sub_deatils(len(train_dataset), len(dev_dataset), 0, len(txt_vocab), len(gls_vocab), trainer.logger.info)
+    else:
+        log_data_info(
+            train_data=train_data,
+            valid_data=dev_data,
+            test_data=test_data,
+            gls_vocab=gls_vocab,
+            txt_vocab=txt_vocab,
+            logging_function=trainer.logger.info,
+        )
 
     trainer.logger.info(str(model))
 
@@ -1023,11 +1064,15 @@ def train(cfg_file: str) -> None:
     gls_vocab.to_file(gls_vocab_file)
     txt_vocab_file = "{}/txt.vocab".format(cfg["training"]["model_dir"])
     txt_vocab.to_file(txt_vocab_file)
-
     # train the model
-    trainer.train_and_validate(train_data=train_data, valid_data=dev_data, tokenizer=tokenizer, cfg_data=cfg["data"])
+    if run_dynamic_mode:
+        trainer.train_and_validate(train_data=train_loader, valid_data=dev_loader, tokenizer=tokenizer,
+            cfg_data=cfg["data"], dynamic_mode=run_dynamic_mode)
+    else:
+        trainer.train_and_validate(train_data=train_data, valid_data=dev_data, tokenizer=tokenizer, cfg_data=cfg["data"],
+            dynamic_mode=run_dynamic_mode)
     # Delete to speed things up as we don't need training data anymore
-    del train_data, dev_data, test_data
+        del train_data, dev_data, test_data
 
     # predict with the best model on validation and test
     # (if test data is available)
@@ -1036,7 +1081,25 @@ def train(cfg_file: str) -> None:
     output_path = os.path.join(trainer.model_dir, output_name)
     logger = trainer.logger
     del trainer
-    test(cfg_file, ckpt=ckpt, output_path=output_path, logger=logger, tokenizer=tokenizer)
+    #test(cfg_file, ckpt=ckpt, output_path=output_path, logger=logger, tokenizer=tokenize,)
+
+
+
+def save_data_into_files(dir_path, train_data, txt_vocab, tokenizer, data_cfg):
+
+    for row in train_data.examples:
+        numeric_txt = [txt_vocab.stoi[BOS_TOKEN(data_cfg=data_cfg, tokenizer=tokenizer)]]
+        for w in row.txt:
+            numeric_txt.append(txt_vocab.stoi[w] if w in txt_vocab.stoi else UNK_TOKEN(data_cfg, tokenizer))
+        numeric_txt.append(txt_vocab.stoi[EOS_TOKEN(data_cfg, tokenizer)])
+        dict_to_save = {
+           "gls" : row.gls,
+           "sequence" : row.sequence,
+            "sgn" : row.sgn,
+            "signer" : row.signer,
+            "txt" : numeric_txt
+        }
+        torch.save(dict_to_save, f"{dir_path}/{row.sequence}.pt", _use_new_zipfile_serialization=False)
 
 
 if __name__ == "__main__":

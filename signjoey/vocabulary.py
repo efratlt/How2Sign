@@ -174,7 +174,7 @@ class TextVocabulary(Vocabulary):
         :param mBartVocab: if true, will use special tokens from the mBART vocabulary
         """
         super().__init__()
-        self.tokenizer = None
+        #self.tokenizer = None
 
         if tokenizer is not None:
             vocab = {}
@@ -192,7 +192,7 @@ class TextVocabulary(Vocabulary):
                 self.stoi[token] = i
             self.specials = get_special_tokens(data_cfg=data_cfg, tokenizer=tokenizer)
             self.DEFAULT_UNK_ID = get_unk_token_id(data_cfg=data_cfg, tokenizer=tokenizer)
-            self.tokenizer = tokenizer
+            #self.tokenizer = tokenizer
         else:
             if not mBartVocab:
                 self.specials = [UNK_TOKEN(), PAD_TOKEN(), BOS_TOKEN(), EOS_TOKEN()]
@@ -207,7 +207,7 @@ class TextVocabulary(Vocabulary):
             elif file is not None:
                 self._from_file(file)
 
-    def array_to_sentence(self, array: np.array, cut_at_eos=True, tokens_to_remove=None, level=None) -> List[str]:
+    def array_to_sentence(self, array: np.array, cut_at_eos=True, tokens_to_remove=None, level=None, tokenizer=None) -> List[str]:
         """
         Converts an array of IDs to a sentence, optionally cutting the result
         off at the end-of-sequence token.
@@ -217,11 +217,11 @@ class TextVocabulary(Vocabulary):
         :return: list of strings (tokens)
         """
 
-        if self.tokenizer is not None:
+        if tokenizer is not None:
             if level == "sentencepiece":
-                sentence = self.tokenizer.DecodeIds([int(a) for a in array])
+                sentence = tokenizer.DecodeIds([int(a) for a in array])
             else:
-                sentence = self.tokenizer.decode(list(array))
+                sentence = tokenizer.decode(list(array))
             first_token_to_remove = len(sentence)
             if tokens_to_remove is not None:
                 for token_to_remove in tokens_to_remove:
@@ -239,7 +239,7 @@ class TextVocabulary(Vocabulary):
                 sentence.append(s)
         return sentence
 
-    def arrays_to_sentences(self, arrays: np.array, cut_at_eos=True, tokens_to_remove=None, level=None) -> List[List[str]]:
+    def arrays_to_sentences(self, arrays: np.array, cut_at_eos=True, tokens_to_remove=None, level=None, tokenizer=None) -> List[List[str]]:
         """
         Convert multiple arrays containing sequences of token IDs to their
         sentences, optionally cutting them off at the end-of-sequence token.
@@ -250,12 +250,12 @@ class TextVocabulary(Vocabulary):
         """
         sentences = []
         for array in arrays:
-            sentences.append(self.array_to_sentence(array=array, cut_at_eos=cut_at_eos, tokens_to_remove=tokens_to_remove, level=level))
+            sentences.append(self.array_to_sentence(array=array, cut_at_eos=cut_at_eos, tokens_to_remove=tokens_to_remove, level=level, tokenizer=tokenizer))
         return sentences
 
 
 class GlossVocabulary(Vocabulary):
-    def __init__(self, tokens: List[str] = None, file: str = None):
+    def __init__(self, tokens: List[str] = None, file: str = None, data_cfg=None, tokenizer=None):
         """
         Create vocabulary from list of tokens or file.
 
@@ -267,8 +267,9 @@ class GlossVocabulary(Vocabulary):
         """
         super().__init__()
         self.specials = [SIL_TOKEN(), UNK_TOKEN(), PAD_TOKEN()]
-        self.DEFAULT_UNK_ID = lambda: 1
-        self.stoi = defaultdict(self.DEFAULT_UNK_ID)
+        self.DEFAULT_UNK_ID = get_unk_token_id(data_cfg=data_cfg, tokenizer=tokenizer)
+        self.stoi = defaultdict()
+        #self.stoi = defaultdict(self.DEFAULT_UNK_ID)
 
         if tokens is not None:
             self._from_list(tokens)
@@ -278,6 +279,9 @@ class GlossVocabulary(Vocabulary):
         # TODO (Cihan): This bit is hardcoded so that the silence token
         #   is the first label to be able to do CTC calculations (decoding etc.)
         #   Might fix in the future.
+        self.stoi = defaultdict()
+        for i, token in enumerate(self.itos):
+            self.stoi[token] = i
         assert self.stoi[SIL_TOKEN()] == 0
 
     def arrays_to_sentences(self, arrays: np.array) -> List[List[str]]:
@@ -322,15 +326,15 @@ def build_vocab(
     :param mBartVocab: if true, will use special tokens from the mBART vocabulary
     :return: Vocabulary created from either `dataset` or `vocab_file`
     """
-    if bertTokenizer is not None:
+    if bertTokenizer is not None and field == "txt":
         vocab = TextVocabulary(file=vocab_file, mBartVocab=mBartVocab, tokenizer=bertTokenizer, data_cfg=data_cfg)
     else:
         if vocab_file is not None:
             # load it from file
             if field == "gls":
-                vocab = GlossVocabulary(file=vocab_file)
+                vocab = GlossVocabulary(file=vocab_file, data_cfg=data_cfg, tokenizer=bertTokenizer)
             elif field == "txt":
-                vocab = TextVocabulary(file=vocab_file, mBartVocab=mBartVocab,  data_cfg=data_cfg)
+                vocab = TextVocabulary(file=vocab_file, mBartVocab=mBartVocab,  data_cfg=data_cfg, tokenizer=bertTokenizer)
             else:
                 raise ValueError("Unknown vocabulary type")
         else:
@@ -350,17 +354,17 @@ def build_vocab(
             assert len(vocab_tokens) <= max_size
 
             if field == "gls":
-                vocab = GlossVocabulary(tokens=vocab_tokens)
+                vocab = GlossVocabulary(tokens=vocab_tokens, data_cfg=data_cfg, tokenizer=bertTokenizer)
             elif field == "txt":
-                vocab = TextVocabulary(tokens=vocab_tokens, mBartVocab=mBartVocab, data_cfg=data_cfg)
+                vocab = TextVocabulary(tokens=vocab_tokens, mBartVocab=mBartVocab, data_cfg=data_cfg, tokenizer=bertTokenizer)
             else:
                 raise ValueError("Unknown vocabulary type")
 
             assert len(vocab) <= max_size + len(vocab.specials)
-            assert vocab.itos[vocab.DEFAULT_UNK_ID()] == UNK_TOKEN()
-
+            #assert vocab.itos[vocab.DEFAULT_UNK_ID()] == UNK_TOKEN()
+        """
         for i, s in enumerate(vocab.specials):
             if i != vocab.DEFAULT_UNK_ID():
                 assert not vocab.is_unk(s)
-
+        """
     return vocab

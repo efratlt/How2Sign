@@ -5,15 +5,16 @@ Data module
 import os
 import sys
 import random
-import sentencepiece as spm
+#import sentencepiece as spm
 import numpy as np
 import torch
 from torchtext import data
 from torchtext.data import Dataset, Iterator
 import socket
-from transformers import AutoTokenizer
+#from transformers import AutoTokenizer
 from signjoey import data_preprocessing
 from signjoey.dataset import SignTranslationDataset
+from signjoey.utils import get_tokenizer
 from signjoey.vocabulary import (
     build_vocab,
     Vocabulary,
@@ -70,14 +71,7 @@ def load_data(data_cfg: dict, keep_only = None) -> (Dataset, Dataset, Dataset, V
         pad_feature_size = data_cfg["feature_size"]
 
     level = data_cfg["level"]
-    tokenizer_type = data_cfg["tokenizer"]
-    tokenizer = None
-    if tokenizer_type == "transformer":
-        if level == "sentencepiece":
-            tokenizer = spm.SentencePieceProcessor()
-            tokenizer.Load(data_cfg["tokenize_model"])
-        else:
-            tokenizer = AutoTokenizer.from_pretrained(level)
+    tokenizer = get_tokenizer(data_cfg)
     txt_lowercase = data_cfg["txt_lowercase"]
     max_sent_length = data_cfg["max_sent_length"]
 
@@ -94,6 +88,7 @@ def load_data(data_cfg: dict, keep_only = None) -> (Dataset, Dataset, Dataset, V
     def tokenize_text(text):
         #if txt_lowercase:
             #text = text.lower()
+        tokenizer_type = data_cfg["tokenizer"]
         if tokenizer_type == "transformer":
             if level == "sentencepiece":
                 return tokenizer.EncodeAsPieces(text)
@@ -187,6 +182,8 @@ def load_data(data_cfg: dict, keep_only = None) -> (Dataset, Dataset, Dataset, V
         max_size=gls_max_size,
         dataset=train_data,
         vocab_file=gls_vocab_file,
+        bertTokenizer=tokenizer,
+        data_cfg=data_cfg
     )
     txt_vocab = build_vocab(
         field="txt",
@@ -237,7 +234,6 @@ def load_data(data_cfg: dict, keep_only = None) -> (Dataset, Dataset, Dataset, V
     txt_field.vocab = txt_vocab
     txt_field_pred.vocab = txt_vocab
     return train_data, dev_data, test_data, gls_vocab, txt_vocab, tokenizer
-
 
 # TODO (Cihan): I don't like this use of globals.
 #  Need to find a more elegant solution for this it at some point.

@@ -1,19 +1,27 @@
 name: phoenix14t
 data:
-    data_path: /project/slt/data/
+    data_path: /Users/eluzzon/efrat_private/fpt4slt/data/als
     version: phoenix_2014_trans
     sgn: sign
     txt: text
     gls: gloss
-    train: phoenix14t.pami0.train
-    dev: phoenix14t.pami0.dev
-    test: phoenix14t.pami0.test
+    train: pre_train.pt
+    dev: pre_val.pt
+    test: pre_test.pt
     feature_size: 1024
-    level: word
+    tokenizer: transformer
+    level: sentencepiece
+    tokenize_model : "/Users/eluzzon/efrat_private/How2Sign/cvpr23.train.how2sign.unigram_train.model"
     txt_lowercase: true
     max_sent_length: 400
     random_train_subset: -1
     random_dev_subset: -1
+dynamic:
+    dynamic_loading : false
+    train_dir_path: "/Users/eluzzon/efrat_private/How2Sign/data/train_pt_files"
+    dev_dir_path: "/Users/eluzzon/efrat_private/How2Sign/data/dev_pt_files"
+    test_dir_path: "/Users/eluzzon/efrat_private/How2Sign/data/test_pt_files"
+    vocab_dir : "/Users/eluzzon/efrat_private/How2Sign/data/vocab_pickle"
 testing:
     recognition_beam_sizes:
     - 1
@@ -50,7 +58,7 @@ training:
     reset_scheduler: false
     reset_optimizer: false
     random_seed: 1
-    model_dir: "/project/slt/logs/information_p14t_only/sign2text/phoenix14t/1"
+    model_dir: "/Users/eluzzon/efrat_private/How2Sign/logs/sentencepieace/base/sub1"
     recognition_loss_weight: 0.0
     translation_loss_weight: 1.0
     eval_metric: bleu

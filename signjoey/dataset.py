@@ -13,8 +13,9 @@ import torch
 def load_dataset_file(filename):
 
     loaded_data = torch.load(filename, map_location='cpu')
-   # loaded_object = convert_data_to_dict(loaded_data)
-    return loaded_data #loaded_object
+    loaded_object = convert_data_to_dict(loaded_data)
+    return loaded_object
+    #return loaded_data #loaded_object
 
 
     #with (open(filename, "rb")) as f:

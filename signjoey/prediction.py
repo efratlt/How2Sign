@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import torch
 
+from SignDataLoader import get_txt_from_batch
+
 torch.backends.cudnn.deterministic = True
 import transformers
 import logging
@@ -52,7 +54,8 @@ def validate_on_data(
     dataset_version: str = "phoenix_2014_trans",
     frame_subsampling_ratio: int = None,
     tokenizer = None,
-    cfg_data = None
+    cfg_data = None,
+    dynamic_mode=False
 ) -> (
     float,
     float,
@@ -104,13 +107,17 @@ def validate_on_data(
         - decoded_valid: raw validation hypotheses (before post-processing),
         - valid_attention_scores: attention scores for validation hypotheses
     """
-    valid_iter = make_data_iter(
-        dataset=data,
-        batch_size=batch_size,
-        batch_type=batch_type,
-        shuffle=False,
-        train=False,
-    )
+
+    if dynamic_mode:
+        valid_data_iterator = data
+    else:
+        valid_loader = make_data_iter(
+            dataset=data,
+            batch_size=batch_size,
+            batch_type=batch_type,
+            shuffle=False,
+            train=False,
+        )
 
     # disable dropout
     model.eval()
@@ -124,7 +131,9 @@ def validate_on_data(
         total_num_txt_tokens = 0
         total_num_gls_tokens = 0
         total_num_seqs = 0
-        for valid_batch in iter(valid_iter):
+        if not dynamic_mode:
+            valid_data_iterator = iter(valid_loader)
+        for valid_batch in valid_data_iterator:
             batch = Batch(
                 is_train=False,
                 torch_batch=valid_batch,
@@ -217,7 +226,10 @@ def validate_on_data(
             gls_wer_score = wer_list(hypotheses=gls_hyp, references=gls_ref)
 
         if do_translation:
-            assert len(all_txt_outputs) == len(data)
+            if dynamic_mode:
+                assert len(all_txt_outputs) == len(data.sampler)
+            else:
+                assert len(all_txt_outputs) == len(data)
             if (
                 translation_loss_function is not None
                 and translation_loss_weight != 0
@@ -235,21 +247,37 @@ def validate_on_data(
             if cfg_data["tokenizer"] == "transformer":
                 tokens_to_remove = [PAD_TOKEN(cfg_data, tokenizer), EOS_TOKEN(cfg_data, tokenizer)]
             decoded_txt = model.txt_vocab.arrays_to_sentences(arrays=all_txt_outputs, tokens_to_remove=tokens_to_remove,
-                level=level)
+                level=level, tokenizer=tokenizer)
             # evaluate with metric on full dataset
             join_char = " " if level in ["word", "bpe"] else ""
             # Construct text sequences for metrics
 
             # mBART50 specific changes to reference
             references = []
-            for t in data.txt:
-                references.append(t)
-            if cfg_data["tokenizer"] == "transformer":
-                if level == "sentencepiece":
-                    txt_ref = [tokenizer.DecodePieces(t) for t in references]
-                else:
-                    txt_ref = [tokenizer.convert_tokens_to_string(t) for t in references]
-                txt_hyp = decoded_txt
+
+            if dynamic_mode:
+                main_fnc = data.collate_fn
+                data.collate_fn = get_txt_from_batch
+                for batch_data in data:
+                    #batch_token_ref = [example.txt for example in batch_data]
+                    if cfg_data["tokenizer"] == "transformer":
+                        if level == "sentencepiece":
+                            references.extend([tokenizer.decode_ids(ref) for ref in batch_data["txt"]])
+                        else:
+                            assert 0, "not implemented yet"
+                data.collate_fn = main_fnc
+                txt_ref = references
+                txt_sequence = batch_data["sequence"]
+            else:
+                for t in data.txt:
+                    references.append(t)
+                if cfg_data["tokenizer"] == "transformer":
+                    if level == "sentencepiece":
+                        txt_ref = [tokenizer.DecodePieces(t) for t in references]
+                    else:
+                        txt_ref = [tokenizer.convert_tokens_to_string(t) for t in references]
+                txt_sequence = data.sequence
+            txt_hyp = decoded_txt
 
             for tindx, t in enumerate(references):
                 if t[0].lower() == 'de_de':
@@ -297,6 +325,7 @@ def validate_on_data(
         results["decoded_txt"] = decoded_txt
         results["txt_ref"] = txt_ref
         results["txt_hyp"] = txt_hyp
+        results["txt_sequence"] = txt_sequence
 
     return results
 
@@ -407,7 +436,7 @@ def test(
             translation_loss_function.cuda()
 
     # NOTE (Cihan): Currently Hardcoded to be 0 for TensorFlow decoding
-    assert model.gls_vocab.stoi[SIL_TOKEN(cfg["data"], tokenizer)] == 0
+    #assert model.gls_vocab.stoi[SIL_TOKEN(cfg["data"], tokenizer)] == 0
 
     if do_recognition:
         # Dev Recognition CTC Beam Search Results
@@ -509,7 +538,8 @@ def test(
                     translation_beam_alpha=ta,
                     frame_subsampling_ratio=frame_subsampling_ratio,
                     tokenizer=tokenizer,
-                    cfg_data=cfg["data"]
+                    cfg_data=cfg["data"],
+                    dynamic_mode=dynamic_mode
                 )
 
                 if (
@@ -618,7 +648,8 @@ def test(
         translation_beam_alpha=dev_best_translation_alpha if do_translation else None,
         frame_subsampling_ratio=frame_subsampling_ratio,
         tokenizer=tokenizer,
-        cfg_data=cfg["data"]
+        cfg_data=cfg["data"],
+        dynamic_mode=dynamic_mode
     )
 
     logger.info(

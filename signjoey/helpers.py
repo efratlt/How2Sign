@@ -119,6 +119,35 @@ def set_seed(seed: int):
     np.random.seed(seed)
     random.seed(seed)
 
+def log_data_info_sub_deatils(
+        len_train_data,
+        len_valid_data,
+        len_test_data,
+        len_gls_vocab,
+        len_txt_vocab,
+        logging_function: Callable[[str], None],
+):
+    """
+    Log statistics of data and vocabulary.
+
+    :param train_data:
+    :param valid_data:
+    :param test_data:
+    :param gls_vocab:
+    :param txt_vocab:
+    :param logging_function:
+    """
+    logging_function(
+        "Data set sizes: \n\ttrain {:d},\n\tvalid {:d},\n\ttest {:d}".format(
+            len_train_data,
+            len_valid_data,
+            len_test_data,
+        )
+    )
+
+    logging_function("Number of unique glosses (types): {}".format(len_gls_vocab))
+    logging_function("Number of unique words (types): {}".format(len_txt_vocab))
+
 
 def log_data_info(
         train_data: Dataset,
@@ -145,7 +174,7 @@ def log_data_info(
             len(test_data) if test_data is not None else 0,
         )
     )
-
+    """
     logging_function(
         "First training example:\n\t[GLS] {}\n\t[TXT] {}".format(
             " ".join(vars(train_data[0])["gls"]), " ".join(vars(train_data[0])["txt"])
@@ -162,6 +191,7 @@ def log_data_info(
             " ".join("(%d) %s" % (i, t) for i, t in enumerate(txt_vocab.itos[:10]))
         )
     )
+    """
 
     logging_function("Number of unique glosses (types): {}".format(len(gls_vocab)))
     logging_function("Number of unique words (types): {}".format(len(txt_vocab)))

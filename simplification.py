@@ -93,10 +93,12 @@ for p in phases:
     original_simplification_with_score["score"] = original_simplification_with_score["score"].apply(convert_string_tensor_to_float)
     feature_data_path = f"/Users/eluzzon/efrat_private/fpt4slt/data/als/sub1_{p}.pt"
     loaded_data = torch.load(feature_data_path, map_location='cpu')
-    for feature_data in loaded_data:
+    i = 0
+    for feature_data in tqdm(loaded_data):
         feature_id = feature_data["name"]
         row = original_simplification_with_score[original_simplification_with_score["id"] == feature_id]
-        if not row.empty and row["score"].values[0] >= 0.8:
+        if not row.empty and row["score"].values[0] >= 0.95:
+            i += 1
             copy_feature_data = feature_data.copy()
             copy_feature_data["name"] = "copy_" + copy_feature_data["name"]
             copy_feature_data["text"] = row["simplify"].values[0]
@@ -106,3 +108,5 @@ for p in phases:
 
     torch.save(origina_simplify_features, f"/Users/eluzzon/efrat_private/How2Sign/data/sub1_{p}_comb_simplify>0.8.pt",
         _use_new_zipfile_serialization=False)
+    len_phase = len(loaded_data)
+    print(f"{p}_time: {i}/{len_phase}")
