@@ -41,7 +41,7 @@ from torchtext.data import Dataset
 from torch.utils.data import DataLoader
 from typing import List, Dict
 import pickle
-
+from tqdm import tqdm
 # pylint: disable=too-many-instance-attributes
 class TrainManager:
     """ Manages training loop, validations, learning rate scheduling
@@ -385,7 +385,7 @@ class TrainManager:
                 processed_txt_tokens = self.total_txt_tokens
                 epoch_translation_loss = 0
 
-            for batch in train_data_iterator:
+            for batch in tqdm(train_data_iterator):
                 # reactivate training
                 # create a Batch object from torchtext batch
                 batch = Batch(
@@ -1010,16 +1010,17 @@ def train(cfg_file: str) -> None:
         tokenizer = get_tokenizer(cfg["data"])
         txt_vocab = load_vocab("txt", dynamic_loading_config["vocab_dir"])
         gls_vocab = load_vocab("gls", dynamic_loading_config["vocab_dir"])
-
+        use_cuda = cfg["training"]["use_cuda"]
         custom_collate_fn_with_dynamic_padding = partial(wrapper_collate_with_dynamic_padding,
             txt_vocab.stoi[PAD_TOKEN(cfg["data"], tokenizer)])
 
         train_dataset = DynamicSignDataset(dynamic_loading_config["train_dir_path"])
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=custom_collate_fn_with_dynamic_padding)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size,
+            collate_fn=custom_collate_fn_with_dynamic_padding, shuffle=True, pin_memory=use_cuda)
 
         dev_dataset = DynamicSignDataset(dynamic_loading_config["dev_dir_path"])
         dev_loader = DataLoader(dev_dataset, batch_size=batch_size,
-            collate_fn=custom_collate_fn_with_dynamic_padding)
+            collate_fn=custom_collate_fn_with_dynamic_padding, shuffle=False, pin_memory=use_cuda)
 
     # build model and load parameters into it
     do_recognition = cfg["training"].get("recognition_loss_weight", 1.0) > 0.0
@@ -1090,7 +1091,7 @@ def save_data_into_files(dir_path, train_data, txt_vocab, tokenizer, data_cfg):
     for row in train_data.examples:
         numeric_txt = [txt_vocab.stoi[BOS_TOKEN(data_cfg=data_cfg, tokenizer=tokenizer)]]
         for w in row.txt:
-            numeric_txt.append(txt_vocab.stoi[w] if w in txt_vocab.stoi else UNK_TOKEN(data_cfg, tokenizer))
+            numeric_txt.append(txt_vocab.stoi[w] if w in txt_vocab.stoi else txt_vocab.stoi[UNK_TOKEN(data_cfg, tokenizer)])
         numeric_txt.append(txt_vocab.stoi[EOS_TOKEN(data_cfg, tokenizer)])
         dict_to_save = {
            "gls" : row.gls,

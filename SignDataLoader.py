@@ -12,6 +12,17 @@ class SignDataObject:
         self.signer = signer
         self.txt = txt
 
+    def pin_memory(self):
+        self.gls = self.gls.pin_memory()
+        self.sequence = self.sequence.pin_memory()
+        self.sgn = self.sgn.pin_memory()
+        self.signer = self.signer.pin_memory()
+        self.txt = self.txt.pin_memory()
+
+
+
+        return self
+
 class DynamicSignDataset(Dataset):
     def __init__(self, dir_path):
         self.dir_files_paths = dir_path

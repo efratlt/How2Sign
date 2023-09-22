@@ -29,7 +29,7 @@ from signjoey.phoenix_utils.phoenix_cleanup import (
     clean_phoenix_2014,
     clean_phoenix_2014_trans,
 )
-
+from tqdm import tqdm
 
 # pylint: disable=too-many-arguments,too-many-locals,no-member
 def validate_on_data(
@@ -133,7 +133,7 @@ def validate_on_data(
         total_num_seqs = 0
         if not dynamic_mode:
             valid_data_iterator = iter(valid_loader)
-        for valid_batch in valid_data_iterator:
+        for valid_batch in tqdm(valid_data_iterator):
             batch = Batch(
                 is_train=False,
                 torch_batch=valid_batch,
@@ -256,6 +256,7 @@ def validate_on_data(
             references = []
 
             if dynamic_mode:
+                txt_sequence = []
                 main_fnc = data.collate_fn
                 data.collate_fn = get_txt_from_batch
                 for batch_data in data:
@@ -265,9 +266,10 @@ def validate_on_data(
                             references.extend([tokenizer.decode_ids(ref) for ref in batch_data["txt"]])
                         else:
                             assert 0, "not implemented yet"
+                    txt_sequence.extend(batch_data["sequence"])
                 data.collate_fn = main_fnc
                 txt_ref = references
-                txt_sequence = batch_data["sequence"]
+
             else:
                 for t in data.txt:
                     references.append(t)
